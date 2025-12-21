@@ -1,0 +1,66 @@
+[package]
+name = "newbee_ocr_cli"
+version = "0.1.0"
+edition = "2021"
+description = "A powerful and easy-to-use CLI tool for OCR based on ocr-rs"
+authors = ["ChenZibo <qw.54@163.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/zibo-chen/newbee-ocr-cli"
+homepage = "https://github.com/zibo-chen/newbee-ocr-cli"
+keywords = ["ocr", "cli", "paddleocr", "text-recognition"]
+
+[features]
+default = ["metal", "embed-det-v5-fp16"]
+
+# 检测模型内嵌
+embed-det-v5 = []
+embed-det-v5-fp16 = []
+embed-det-v4 = []
+
+# 识别模型内嵌
+embed-rec-chinese = []    # PP-OCRv5 中文模型
+embed-rec-korean = []     # Korean, English
+embed-rec-latin = []      # French, German, Italian, Spanish, Portuguese, Dutch, etc.
+embed-rec-eslav = []      # Russian, Belarusian, Ukrainian, English
+embed-rec-thai = []       # Thai, English
+embed-rec-greek = []      # Greek, English
+embed-rec-english = []    # English only
+embed-rec-cyrillic = []   # Russian, Bulgarian, Mongolian, etc.
+embed-rec-arabic = []     # Arabic, Persian, Uyghur, Urdu, etc.
+embed-rec-devanagari = [] # Hindi, Marathi, Nepali, Sanskrit, etc.
+embed-rec-tamil = []      # Tamil, English
+embed-rec-telugu = []     # Telugu, English
+
+# GPU 后端支持
+metal = ["ocr-rs/metal"]
+opencl = ["ocr-rs/opencl"]
+vulkan = ["ocr-rs/vulkan"]
+cuda = ["ocr-rs/cuda"]
+
+[dependencies]
+ocr-rs = { path = "../" }
+clap = { version = "4", features = ["derive", "color"] }
+image = "0.25"
+rayon = "1.8"
+crossbeam-channel = "0.5"
+indicatif = "0.17"
+console = "0.15"
+env_logger = "0.10"
+log = "0.4"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+walkdir = "2.4"
+num_cpus = "1.16"
+colored = "2"
+
+[build-dependencies]
+
+[[bin]]
+name = "nbocr"
+path = "src/main.rs"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
