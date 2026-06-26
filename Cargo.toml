@@ -60,6 +60,10 @@ walkdir = "2.4"
 num_cpus = "1.16"
 colored = "2"
 ureq = { version = "2", features = ["native-tls", "proxy-from-env"] }
+actix-web = "4"
+actix-multipart = "0.4"
+tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
 
 [build-dependencies]
 

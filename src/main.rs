@@ -12,6 +12,7 @@
 
 mod models;
 mod pipeline;
+mod service;
 
 use std::fs;
 use std::io::{self, Write};
@@ -169,6 +170,29 @@ enum Commands {
         /// Model name (e.g., chinese, korean, latin)
         model: String,
     },
+
+    /// Start OCR HTTP service
+    #[command(visible_alias = "s")]
+    Service {
+        #[arg(long, default_value = "0.0.0.0")]
+        host: String,
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
+        #[arg(short = 'l', long, default_value = "chinese")]
+        language: String,
+        #[arg(short = 'd', long, default_value = "v6-tiny")]
+        det_model: String,
+        #[arg(short = 'm', long, value_name = "DIR")]
+        models_dir: Option<PathBuf>,
+        #[arg(long, default_value = "fast", value_enum)]
+        precision: PrecisionModeArg,
+        #[arg(short = 't', long, default_value_t = 4)]
+        threads: i32,
+        #[arg(long, value_enum)]
+        gpu: Option<GpuBackend>,
+        #[arg(short = 'v', long)]
+        verbose: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -181,8 +205,9 @@ enum OutputFormat {
     Jsonl,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum PrecisionModeArg {
+
+#[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize)]
+pub(crate) enum PrecisionModeArg {
     /// Fast mode - optimized for speed
     Fast,
 }
@@ -195,8 +220,8 @@ impl PrecisionModeArg {
     }
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum GpuBackend {
+#[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize)]
+pub(crate) enum GpuBackend {
     /// Metal (macOS/iOS)
     Metal,
     /// OpenCL (cross-platform)
@@ -250,8 +275,9 @@ struct BoundingBox {
 
 fn main() -> Result<()> {
     // 初始化日志
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
-
+    let is_service = std::env::args().any(|a| a == "service" || a == "s");
+    let default_filter = if is_service { "info" } else { "warn" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter)).init();
     let cli = Cli::parse();
 
     match cli.command {
@@ -313,11 +339,17 @@ fn main() -> Result<()> {
         ),
         Commands::List { detailed } => cmd_list(detailed),
         Commands::Info { model } => cmd_info(&model),
+        Commands::Service {
+            host, port, language, det_model, models_dir, precision, threads, gpu, verbose,
+        } => service::run_service(
+            &host, port, &language, &det_model, models_dir.as_deref(),
+            precision, threads, gpu, verbose,
+        ),
     }
 }
 
 /// 创建 OCR 引擎
-fn create_engine(
+pub(crate) fn create_engine(
     rec_model: RecognitionModel,
     det_model: DetectionModel,
     models_dir: Option<&Path>,
