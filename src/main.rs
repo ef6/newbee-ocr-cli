@@ -372,7 +372,7 @@ fn main() -> Result<()> {
 }
 
 /// 创建 OCR 引擎
-+pub(crate) fn create_engine(
+pub(crate) fn create_engine(
     rec_model: RecognitionModel,
     det_model: DetectionModel,
     models_dir: Option<&Path>,
