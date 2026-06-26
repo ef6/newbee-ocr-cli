@@ -3,7 +3,17 @@
 //! 定义内嵌模型和语言支持
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+pub const DEFAULT_MODELS_DIR: &str = "models";
+pub const MODEL_DOWNLOAD_TAG: &str = "v2.3.1";
+
+pub fn model_download_url(filename: &str) -> String {
+    format!(
+        "https://raw.githubusercontent.com/zibo-chen/rust-paddle-ocr/{}/models/{}",
+        MODEL_DOWNLOAD_TAG, filename
+    )
+}
 
 const PP_OCRV6_SUPPORTED_LANGUAGES: &[&str] = &[
     "Chinese (Simplified)",
@@ -872,7 +882,7 @@ impl EmbeddedModels {
 
 /// 模型路径解析器
 pub struct ModelResolver {
-    models_dir: Option<std::path::PathBuf>,
+    models_dir: Option<PathBuf>,
 }
 
 impl ModelResolver {
@@ -883,51 +893,22 @@ impl ModelResolver {
         }
     }
 
-    /// 解析检测模型路径
-    pub fn resolve_det_model(&self, model: DetectionModel) -> Option<std::path::PathBuf> {
-        if let Some(ref dir) = self.models_dir {
-            let path = dir.join(model.model_filename());
-            if path.exists() {
-                return Some(path);
-            }
-        }
-
-        // 尝试当前目录下的 models 文件夹
-        let local_path = std::path::PathBuf::from("models").join(model.model_filename());
-        if local_path.exists() {
-            return Some(local_path);
-        }
-
-        None
+    pub fn install_dir(&self) -> PathBuf {
+        self.models_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_MODELS_DIR))
     }
 
-    /// 解析识别模型路径
-    pub fn resolve_rec_model(&self, model: RecognitionModel) -> Option<std::path::PathBuf> {
+    pub fn resolve_file(&self, filename: &str) -> Option<PathBuf> {
         if let Some(ref dir) = self.models_dir {
-            let path = dir.join(model.model_filename());
+            let path = dir.join(filename);
             if path.exists() {
                 return Some(path);
             }
+            return None;
         }
 
-        let local_path = std::path::PathBuf::from("models").join(model.model_filename());
-        if local_path.exists() {
-            return Some(local_path);
-        }
-
-        None
-    }
-
-    /// 解析字符集路径
-    pub fn resolve_charset(&self, model: RecognitionModel) -> Option<std::path::PathBuf> {
-        if let Some(ref dir) = self.models_dir {
-            let path = dir.join(model.charset_filename());
-            if path.exists() {
-                return Some(path);
-            }
-        }
-
-        let local_path = std::path::PathBuf::from("models").join(model.charset_filename());
+        let local_path = PathBuf::from(DEFAULT_MODELS_DIR).join(filename);
         if local_path.exists() {
             return Some(local_path);
         }
@@ -1090,6 +1071,14 @@ mod tests {
     #[test]
     fn ppocrv6_recognition_models_use_unified_charset() {
         assert_eq!(
+            RecognitionModel::V6Tiny.model_filename(),
+            "PP-OCRv6_tiny_rec.mnn"
+        );
+        assert_eq!(
+            RecognitionModel::V6Tiny.charset_filename(),
+            "ppocr_keys_v6_tiny.txt"
+        );
+        assert_eq!(
             RecognitionModel::V6Small.model_filename(),
             "PP-OCRv6_small_rec.mnn"
         );
@@ -1104,6 +1093,68 @@ mod tests {
         assert!(RecognitionModel::V6Medium
             .supported_languages()
             .contains(&"Japanese"));
+    }
+
+    #[test]
+    fn parses_latest_ppocrv6_aliases() {
+        assert_eq!(
+            DetectionModel::from_str("PP-OCRv6"),
+            Some(DetectionModel::V6Tiny)
+        );
+        assert_eq!(
+            DetectionModel::from_str("PP-OCRv6-small"),
+            Some(DetectionModel::V6Small)
+        );
+        assert_eq!(
+            DetectionModel::from_str("PP-OCRv6-medium"),
+            Some(DetectionModel::V6Medium)
+        );
+        assert_eq!(
+            RecognitionModel::from_str("PP-OCRv6-small"),
+            Some(RecognitionModel::V6Small)
+        );
+        assert_eq!(
+            RecognitionModel::from_str("PP-OCRv6-medium"),
+            Some(RecognitionModel::V6Medium)
+        );
+    }
+
+    #[test]
+    fn default_feature_set_embeds_ppocrv6_tiny() {
+        assert!(cfg!(feature = "embed-det-v6-tiny"));
+        assert!(cfg!(feature = "embed-rec-v6-tiny"));
+        assert!(EmbeddedModels::get_det_model(DetectionModel::V6Tiny).is_some());
+        assert!(EmbeddedModels::get_rec_model(RecognitionModel::V6Tiny).is_some());
+        assert!(EmbeddedModels::get_charset(RecognitionModel::V6Tiny).is_some());
+    }
+
+    #[test]
+    fn github_model_download_urls_are_versioned() {
+        assert_eq!(MODEL_DOWNLOAD_TAG, "v2.3.1");
+        assert_eq!(
+            model_download_url("PP-OCRv6_small_det.mnn"),
+            "https://raw.githubusercontent.com/zibo-chen/rust-paddle-ocr/v2.3.1/models/PP-OCRv6_small_det.mnn"
+        );
+    }
+
+    #[test]
+    fn model_resolver_download_dir_defaults_to_models() {
+        let resolver = ModelResolver::new(None);
+        assert_eq!(resolver.install_dir(), PathBuf::from(DEFAULT_MODELS_DIR));
+
+        let custom = Path::new("/tmp/nbocr-models");
+        let resolver = ModelResolver::new(Some(custom));
+        assert_eq!(resolver.install_dir(), custom);
+    }
+
+    #[test]
+    fn explicit_models_dir_does_not_fallback_to_default_models() {
+        let filename = RecognitionModel::V6Tiny.charset_filename();
+        assert!(PathBuf::from(DEFAULT_MODELS_DIR).join(filename).exists());
+
+        let custom = Path::new("/tmp/nbocr-model-resolver-empty-that-should-not-exist");
+        let resolver = ModelResolver::new(Some(custom));
+        assert_eq!(resolver.resolve_file(filename), None);
     }
 
     #[test]

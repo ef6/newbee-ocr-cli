@@ -1,6 +1,6 @@
 # Newbee OCR CLI
 
-A command-line OCR tool built on [rust-paddle-ocr](../rust-paddle-ocr). It supports single-image OCR, batch OCR, JSON/JSONL output, GPU backends, and optional embedded models.
+A command-line OCR tool built on [rust-paddle-ocr](https://github.com/zibo-chen/rust-paddle-ocr) / `ocr-rs` 2.3.1. The default binary embeds PP-OCRv6 tiny, so basic OCR works without a separate model download. PP-OCRv6 small, medium, and legacy/script-specific models are downloaded from GitHub on demand when local files are missing.
 
 ## Build
 
@@ -11,27 +11,58 @@ cargo build --release
 
 The binary is written to `target/release/nbocr`.
 
-## Model Files
+## Quick Use
 
-Put all runtime MNN models under `models/`.
+Default embedded PP-OCRv6 tiny:
 
-PP-OCRv6 files:
-
-```text
-models/PP-OCRv6_tiny_det.mnn
-models/PP-OCRv6_tiny_rec.mnn
-models/ppocr_keys_v6_tiny.txt
-
-models/PP-OCRv6_small_det.mnn
-models/PP-OCRv6_small_rec.mnn
-models/ppocr_keys_v6_small.txt
-
-models/PP-OCRv6_medium_det.mnn
-models/PP-OCRv6_medium_rec.mnn
-models/ppocr_keys_v6_medium.txt
+```bash
+nbocr r image.png
 ```
 
-The converter defaults to FP16 and can install converted files directly:
+Use another v6 tier. Missing files are downloaded into `--models-dir` or `./models`:
+
+```bash
+nbocr r document.jpg -d v6-small -l ja
+nbocr r document.jpg -d v6-medium -l fr -f json
+```
+
+Batch:
+
+```bash
+nbocr b ./images --recursive -f jsonl -o results.jsonl
+```
+
+## PP-OCRv6 Support
+
+Use `-d v6-tiny`, `-d v6-small`, or `-d v6-medium`. The CLI automatically pairs detection with the matching v6 recognition model.
+
+PP-OCRv6 is not one model per language. Each v6 tier uses one multilingual recognition model plus its tier-specific charset:
+
+| Tier | Detection | Recognition | Charset | Language scope |
+|---|---|---|---|---|
+| `v6-tiny` | `PP-OCRv6_tiny_det.mnn` | `PP-OCRv6_tiny_rec.mnn` | `ppocr_keys_v6_tiny.txt` | Chinese, English, and the official Latin-script set; Japanese excluded |
+| `v6-small` | `PP-OCRv6_small_det.mnn` | `PP-OCRv6_small_rec.mnn` | `ppocr_keys_v6_small.txt` | Official 50 v6 recognition languages |
+| `v6-medium` | `PP-OCRv6_medium_det.mnn` | `PP-OCRv6_medium_rec.mnn` | `ppocr_keys_v6_medium.txt` | Official 50 v6 recognition languages |
+
+`-l, --language` validates the requested language and keeps output/config explicit; for v6 it does not select a separate language-specific recognition file.
+
+Korean, Cyrillic, Arabic, Devanagari, Thai, Greek, Tamil, and Telugu should use PP-OCRv5 script-specific recognition models.
+
+## Model Files
+
+The default v6 tiny files are embedded by default. Other missing files are downloaded from:
+
+```text
+https://raw.githubusercontent.com/zibo-chen/rust-paddle-ocr/v2.3.1/models/
+```
+
+Download target:
+- `--models-dir <DIR>` when provided.
+- `./models` otherwise.
+
+Already-downloaded files are reused.
+
+To install converted Paddle models manually:
 
 ```bash
 python ../rust-paddle-ocr/script/convert_paddle_to_mnn.py \
@@ -39,36 +70,7 @@ python ../rust-paddle-ocr/script/convert_paddle_to_mnn.py \
   --install-dir ./models
 ```
 
-## PP-OCRv6 Support
-
-Use `-d v6-tiny`, `-d v6-small`, or `-d v6-medium`. The CLI automatically pairs the matching v6 detection and recognition model.
-
-```bash
-nbocr r document.jpg -m ./models -d v6-small -l ja
-nbocr r document.jpg -m ./models -d v6-medium -l fr -f json
-```
-
-Language boundary:
-- `v6-small` and `v6-medium`: official 50 v6 recognition languages, including Simplified Chinese, Traditional Chinese, English, Japanese, and 46 Latin-script languages.
-- `v6-tiny`: same v6 set except Japanese.
-- Korean, Cyrillic, Arabic, Devanagari, Thai, Greek, Tamil, and Telugu should use PP-OCRv5 script-specific models.
-
-## Common Commands
-
-Single image:
-
-```bash
-nbocr recognize image.png -m ./models
-nbocr r image.png -m ./models -l english --gpu metal
-nbocr r image.png -m ./models -d v6-small -l japanese --timing
-```
-
-Batch:
-
-```bash
-nbocr batch ./images -m ./models --stats --progress
-nbocr b ./images -m ./models --recursive -f jsonl -o results.jsonl
-```
+## Commands
 
 Inspect models:
 
@@ -82,7 +84,7 @@ Important options:
 
 | Option | Description |
 |---|---|
-| `-m, --models-dir <DIR>` | Model directory |
+| `-m, --models-dir <DIR>` | Model directory and auto-download target |
 | `-d, --det-model <MODEL>` | `v4`, `v5`, `v5-fp16`, `v6-tiny`, `v6-small`, `v6-medium` |
 | `-l, --language <LANG>` | Language/model alias, for example `zh`, `en`, `ja`, `fr`, `arabic` |
 | `-f, --format <FMT>` | `text`, `json`, or `jsonl` |
@@ -91,7 +93,7 @@ Important options:
 
 ## Embedded Models
 
-Optional features can embed selected models into the binary.
+The default feature set embeds PP-OCRv6 tiny. Optional features can embed additional models into the binary.
 
 ```bash
 cargo build --release --features "embed-det-v6-small,embed-rec-v6-small"

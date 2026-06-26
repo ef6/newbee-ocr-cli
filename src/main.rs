@@ -14,9 +14,10 @@ mod models;
 mod pipeline;
 
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -25,8 +26,8 @@ use ocr_rs::{Backend, OcrEngine, OcrEngineConfig};
 use serde::{Deserialize, Serialize};
 
 use crate::models::{
-    is_language_supported_by_detection_model, print_models_table, unsupported_language_message,
-    DetectionModel, EmbeddedModels, ModelResolver, RecognitionModel,
+    is_language_supported_by_detection_model, model_download_url, print_models_table,
+    unsupported_language_message, DetectionModel, EmbeddedModels, ModelResolver, RecognitionModel,
 };
 use crate::pipeline::{OcrPipeline, PipelineConfig, PipelineStats};
 
@@ -59,7 +60,7 @@ enum Commands {
         language: String,
 
         /// Detection/full OCR model version. PP-OCRv6 tiers select matching v6 recognition.
-        #[arg(short = 'd', long, default_value = "v5")]
+        #[arg(short = 'd', long, default_value = "v6-tiny")]
         det_model: String,
 
         /// Path to models directory
@@ -107,7 +108,7 @@ enum Commands {
         language: String,
 
         /// Detection/full OCR model version. PP-OCRv6 tiers select matching v6 recognition.
-        #[arg(short = 'd', long, default_value = "v5")]
+        #[arg(short = 'd', long, default_value = "v6-tiny")]
         det_model: String,
 
         /// Path to models directory
@@ -362,41 +363,27 @@ fn create_engine(
             .map_err(|e| anyhow::anyhow!("Failed to create OCR engine: {}", e));
     }
 
-    // 否则从文件加载
+    // 否则从文件加载，缺失时自动下载到 --models-dir 或默认 ./models
     let resolver = ModelResolver::new(models_dir);
 
-    let det_path = resolver
-        .resolve_det_model(det_model)
-        .or_else(|| {
-            // 尝试直接路径
-            models_dir.map(|d| d.join(det_model.model_filename()))
-        })
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Detection model not found: {}. Please specify --models-dir or use embedded models.",
-                det_model.model_filename()
-            )
-        })?;
-
-    let rec_path = resolver
-        .resolve_rec_model(effective_rec_model)
-        .or_else(|| models_dir.map(|d| d.join(effective_rec_model.model_filename())))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Recognition model not found: {}. Please specify --models-dir or use embedded models.",
-                effective_rec_model.model_filename()
-            )
-        })?;
-
-    let charset_path = resolver
-        .resolve_charset(effective_rec_model)
-        .or_else(|| models_dir.map(|d| d.join(effective_rec_model.charset_filename())))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Charset file not found: {}. Please specify --models-dir.",
-                effective_rec_model.charset_filename()
-            )
-        })?;
+    let det_path = ensure_model_file(
+        &resolver,
+        det_model.model_filename(),
+        "detection model",
+        verbose,
+    )?;
+    let rec_path = ensure_model_file(
+        &resolver,
+        effective_rec_model.model_filename(),
+        "recognition model",
+        verbose,
+    )?;
+    let charset_path = ensure_model_file(
+        &resolver,
+        effective_rec_model.charset_filename(),
+        "charset file",
+        verbose,
+    )?;
 
     if verbose {
         println!(
@@ -414,6 +401,113 @@ fn create_engine(
 
     OcrEngine::new(&det_path, &rec_path, &charset_path, Some(config))
         .map_err(|e| anyhow::anyhow!("Failed to create OCR engine: {}", e))
+}
+
+fn ensure_model_file(
+    resolver: &ModelResolver,
+    filename: &str,
+    label: &str,
+    verbose: bool,
+) -> Result<PathBuf> {
+    if let Some(path) = resolver.resolve_file(filename) {
+        return Ok(path);
+    }
+
+    download_model_file(filename, &resolver.install_dir(), label, verbose)
+}
+
+fn download_model_file(
+    filename: &str,
+    models_dir: &Path,
+    label: &str,
+    verbose: bool,
+) -> Result<PathBuf> {
+    fs::create_dir_all(models_dir).with_context(|| {
+        format!(
+            "Failed to create model directory for auto-download: {}",
+            models_dir.display()
+        )
+    })?;
+
+    let dest = models_dir.join(filename);
+    if dest.exists() {
+        return Ok(dest);
+    }
+
+    let url = model_download_url(filename);
+    if verbose {
+        eprintln!("{} Downloading {}: {}", "↓".blue(), label, filename);
+    } else {
+        eprintln!("Downloading missing {}: {}", label, filename);
+    }
+
+    let tmp_path = models_dir.join(format!("{}.download", filename));
+    let _ = fs::remove_file(&tmp_path);
+
+    let tls_connector = ureq::native_tls::TlsConnector::new()
+        .with_context(|| "Failed to initialize native TLS for model auto-download")?;
+    let agent = ureq::AgentBuilder::new()
+        .tls_connector(Arc::new(tls_connector))
+        .try_proxy_from_env(true)
+        .build();
+
+    let mut last_error = None;
+    let response = {
+        let mut response = None;
+        for attempt in 1..=3 {
+            match agent.get(&url).timeout(Duration::from_secs(120)).call() {
+                Ok(ok) => {
+                    response = Some(ok);
+                    break;
+                }
+                Err(err) => {
+                    last_error = Some(err.to_string());
+                    if verbose {
+                        eprintln!(
+                            "{} Download attempt {}/3 failed for {}",
+                            "!".yellow(),
+                            attempt,
+                            filename
+                        );
+                    }
+                }
+            }
+        }
+
+        response.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Failed to download {} from {} after 3 attempts: {}",
+                filename,
+                url,
+                last_error.unwrap_or_else(|| "unknown error".to_string())
+            )
+        })?
+    };
+    let mut reader = response.into_reader();
+    let mut tmp_file = fs::File::create(&tmp_path).with_context(|| {
+        format!(
+            "Failed to create temporary model file: {}",
+            tmp_path.display()
+        )
+    })?;
+
+    io::copy(&mut reader, &mut tmp_file).with_context(|| {
+        format!(
+            "Failed to write downloaded model file: {}",
+            tmp_path.display()
+        )
+    })?;
+    tmp_file.flush()?;
+
+    fs::rename(&tmp_path, &dest).with_context(|| {
+        format!(
+            "Failed to move downloaded model from {} to {}",
+            tmp_path.display(),
+            dest.display()
+        )
+    })?;
+
+    Ok(dest)
 }
 
 /// 单图识别命令
@@ -949,6 +1043,37 @@ fn format_output(output: &OcrOutput, format: OutputFormat) -> Result<String> {
             }
 
             Ok(lines.join("\n"))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn uses_ocr_rs_2_3_1_recognition_fix() {
+        assert_eq!(ocr_rs::version(), "2.3.1");
+    }
+
+    #[test]
+    fn recognize_defaults_to_embedded_v6_tiny() {
+        let cli = Cli::parse_from(["nbocr", "recognize", "image.png"]);
+
+        match cli.command {
+            Commands::Recognize { det_model, .. } => assert_eq!(det_model, "v6-tiny"),
+            _ => panic!("expected recognize command"),
+        }
+    }
+
+    #[test]
+    fn batch_defaults_to_embedded_v6_tiny() {
+        let cli = Cli::parse_from(["nbocr", "batch", "images"]);
+
+        match cli.command {
+            Commands::Batch { det_model, .. } => assert_eq!(det_model, "v6-tiny"),
+            _ => panic!("expected batch command"),
         }
     }
 }
