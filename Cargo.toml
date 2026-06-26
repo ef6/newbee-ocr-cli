@@ -10,7 +10,7 @@ homepage = "https://github.com/zibo-chen/newbee-ocr-cli"
 keywords = ["ocr", "cli", "paddleocr", "text-recognition"]
 
 [features]
-default = ["metal", "embed-det-v6-tiny", "embed-rec-v6-tiny"]
+default = ["vulkan", "embed-det-v6-tiny", "embed-rec-v6-tiny"]
 
 # 检测模型内嵌
 embed-det-v5 = []
@@ -60,6 +60,8 @@ walkdir = "2.4"
 num_cpus = "1.16"
 colored = "2"
 ureq = { version = "2", features = ["native-tls", "proxy-from-env"] }
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["multipart"] }
 
 [build-dependencies]
 

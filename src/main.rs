@@ -12,6 +12,7 @@
 
 mod models;
 mod pipeline;
+mod service;
 
 use std::fs;
 use std::io::{self, Write};
@@ -169,6 +170,41 @@ enum Commands {
         /// Model name (e.g., chinese, korean, latin)
         model: String,
     },
+
+    /// Start an HTTP service for OCR
+    Service {
+        /// Host to bind (default: 127.0.0.1)
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Port to listen on (default: 8080)
+        #[arg(short = 'p', long, default_value = "8080")]
+        port: u16,
+
+        /// Path to models directory
+        #[arg(short = 'm', long, value_name = "DIR")]
+        models_dir: Option<PathBuf>,
+
+        /// Recognition model/language to use
+        #[arg(short = 'l', long, default_value = "chinese")]
+        language: String,
+
+        /// Detection/full OCR model version
+        #[arg(short = 'd', long, default_value = "v6-tiny")]
+        det_model: String,
+
+        /// GPU backend to use
+        #[arg(long, value_enum)]
+        gpu: Option<GpuBackend>,
+
+        /// Engine precision mode
+        #[arg(long, default_value = "fast", value_enum)]
+        precision: PrecisionModeArg,
+
+        /// Number of threads per engine
+        #[arg(short = 't', long, default_value_t = 4)]
+        threads: i32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -313,11 +349,30 @@ fn main() -> Result<()> {
         ),
         Commands::List { detailed } => cmd_list(detailed),
         Commands::Info { model } => cmd_info(&model),
+        Commands::Service {
+            host,
+            port,
+            models_dir,
+            language,
+            det_model,
+            gpu,
+            precision,
+            threads,
+        } => service::run_service(
+            host,
+            port,
+            models_dir.as_deref(),
+            &language,
+            &det_model,
+            gpu,
+            precision,
+            threads,
+        ),
     }
 }
 
 /// 创建 OCR 引擎
-fn create_engine(
++pub(crate) fn create_engine(
     rec_model: RecognitionModel,
     det_model: DetectionModel,
     models_dir: Option<&Path>,
